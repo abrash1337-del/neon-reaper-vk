@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05040c">
+<title>NEON REAPER</title>
+<link rel="stylesheet" href="style.css">
+<!--
+  Yandex Games SDK. When this build is uploaded to Yandex Games, their
+  hosting serves this file at the relative path below automatically.
+  It 404s harmlessly during local testing / on any other host (RuStore
+  webview included) - js/yandex.js checks `typeof YaGames` before using
+  it, so the game runs fine either way. See README.md before publishing.
+-->
+<script src="/sdk.js"></script>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ================= HUD (visible during play) ================= -->
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+      <div id="level-label">УРОВЕНЬ 1</div>
+      <div id="timer-label" class="hidden">3:00</div>
+      <div id="combo-label">x0</div>
+      <div id="score-label">0</div>
+      <button id="btn-pause-hud" class="hud-pause-btn" aria-label="pause" title="Пауза">⏸</button>
+    </div>
+    <div id="boss-hp-wrap" class="hidden">
+      <div id="boss-name">БОСС</div>
+      <div id="boss-hp-bar"><div id="boss-hp-fill"></div></div>
+    </div>
+    <div id="weapon-bar"></div>
+    <div id="controls-hint">WASD — движение · ЛКМ — атака · ПКМ/F — бросить оружие · ПРОБЕЛ — рывок · ESC — пауза</div>
+  </div>
+  <div id="level-banner" class="hidden"></div>
+
+  <!-- ================= Touch controls (mobile only, shown via JS) ================= -->
+  <div id="touch-controls" class="hidden">
+    <div id="stick-move" class="joystick"><div class="joystick-thumb"></div></div>
+    <div id="stick-aim" class="joystick"><div class="joystick-thumb"></div></div>
+    <button id="btn-dash" class="touch-btn" aria-label="dash">⚡</button>
+    <button id="btn-throw" class="touch-btn" aria-label="throw">➤</button>
+    <button id="btn-pause" class="touch-btn touch-btn-pause" aria-label="pause">⏸</button>
+  </div>
+
+  <!-- ================= Main menu ================= -->
+  <div id="screen-menu" class="screen">
+    <div class="panel">
+      <h1 class="title">NEON REAPER</h1>
+      <p class="subtitle" data-i18n="subtitle">Неоновый ад ждёт. Один рывок между жизнью и смертью.</p>
+      <button class="btn btn-primary" data-action="play" data-i18n="play">ИГРАТЬ</button>
+      <button class="btn" data-action="upgrades" data-i18n="upgrades">УЛУЧШЕНИЯ</button>
+      <button class="btn" data-action="shop" data-i18n="shop">МАГАЗИН</button>
+      <button class="btn" data-action="howtoplay" data-i18n="controls">УПРАВЛЕНИЕ</button>
+      <button class="btn" data-action="leaderboard" data-i18n="leaderboard">ТАБЛИЦА ЛИДЕРОВ</button>
+    </div>
+  </div>
+
+  <!-- ================= Mode select ================= -->
+  <div id="screen-modeselect" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="chooseMode">ВЫБЕРИТЕ РЕЖИМ</h2>
+      <div id="mode-list" class="btn-list"></div>
+      <div class="difficulty-label" data-i18n="difficulty">СЛОЖНОСТЬ</div>
+      <div id="difficulty-row" class="difficulty-row"></div>
+      <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
+    </div>
+  </div>
+
+  <!-- ================= Upgrades (permanent, Meta currency) ================= -->
+  <div id="screen-upgrades" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="upgradesTitle">УЛУЧШЕНИЯ</h2>
+      <div id="upgrades-currency" class="currency-label">Осколки: 0</div>
+      <div id="upgrades-list" class="btn-list"></div>
+      <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
+    </div>
+  </div>
+
+  <!-- ================= Shop (real-money IAP + cosmetic skins) ================= -->
+  <div id="screen-shop" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="shopTitle">МАГАЗИН</h2>
+      <div id="shop-currency" class="currency-label">Осколки: 0</div>
+      <div id="shop-currency-hint" class="currency-hint" data-i18n="shopCurrencyHint">Осколки начисляются за каждый забег (по очкам и уровню) — их также можно докупить ниже.</div>
+      <div class="shop-section-label" data-i18n="shopIapLabel">ДОНАТ</div>
+      <div id="shop-iap-list" class="btn-list"></div>
+      <div class="shop-section-label" data-i18n="shopSkinsLabel">СКИНЫ</div>
+      <div id="shop-skins-list" class="btn-list"></div>
+      <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
+    </div>
+  </div>
+
+  <!-- ================= Perk choice (in-run, shown on every level clear) ================= -->
+  <div id="screen-perkchoice" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="perkTitle">УРОВЕНЬ ПРОЙДЕН — ВЫБЕРИТЕ УСИЛЕНИЕ</h2>
+      <div id="perk-list" class="btn-list"></div>
+    </div>
+  </div>
+
+  <!-- ================= How to play ================= -->
+  <div id="screen-howtoplay" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="controlsTitle">УПРАВЛЕНИЕ</h2>
+      <ul class="howto-list">
+        <li><b>WASD</b> — движение</li>
+        <li><b>Мышь</b> — прицеливание</li>
+        <li><b>ЛКМ (удерживать)</b> — атака текущим оружием</li>
+        <li><b>ПКМ или F</b> — метнуть оружие ближнего боя (нож/катана)</li>
+        <li><b>ПРОБЕЛ</b> — рывок с неуязвимостью</li>
+        <li><b>1–0 / колесо мыши</b> — смена оружия</li>
+        <li><b>ESC / P</b> — пауза</li>
+        <li>На сенсорных экранах — два виртуальных стика и кнопки рывка/броска/паузы</li>
+      </ul>
+      <p class="howto-note" data-i18n="howtoNote">15 видов оружия, разрушаемые стены, боссы и счётчик комбо — не теряйте серию убийств! Периодичность боссов и сложность зависят от выбранного режима.</p>
+      <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
+    </div>
+  </div>
+
+  <!-- ================= Leaderboard ================= -->
+  <div id="screen-leaderboard" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="leaderboardTitle">ТАБЛИЦА ЛИДЕРОВ</h2>
+      <ol id="leaderboard-list"></ol>
+      <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
+    </div>
+  </div>
+
+  <!-- ================= Pause ================= -->
+  <div id="screen-pause" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="pauseTitle">ПАУЗА</h2>
+      <button class="btn btn-primary" data-action="resume" data-i18n="resume">ПРОДОЛЖИТЬ</button>
+      <button class="btn" id="btn-toggle-music" data-action="toggle-music">МУЗЫКА: ВКЛ</button>
+      <button class="btn" id="btn-toggle-sfx" data-action="toggle-sfx">ЗВУК: ВКЛ</button>
+      <button class="btn btn-ghost" data-action="quit-menu" data-i18n="quitMenu">ВЫЙТИ В МЕНЮ</button>
+    </div>
+  </div>
+
+  <!-- ================= Game over ================= -->
+  <div id="screen-gameover" class="screen hidden">
+    <div class="panel">
+      <h2 id="gameover-title">ТЫ ПОГИБ</h2>
+      <div id="gameover-stats"></div>
+      <button class="btn btn-primary hidden" id="btn-revive-ad" data-action="revive-ad" data-i18n="reviveAd">СМОТРЕТЬ РЕКЛАМУ И ВОСКРЕСНУТЬ</button>
+      <input id="name-input" maxlength="16" data-i18n-placeholder="namePlaceholder" placeholder="ВАШЕ ИМЯ">
+      <button class="btn btn-primary" data-action="submit-restart" data-i18n="restart">ЗАНОВО</button>
+      <button class="btn btn-ghost" data-action="submit-menu" data-i18n="toMenu">В МЕНЮ</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/utils.js"></script>
+<script src="js/config.js"></script>
+<script src="js/meta.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/level.js"></script>
+<script src="js/yandex.js"></script>
+<script src="js/monetization.js"></script>
+<!--
+  VK Bridge, for the VK Games / OK Games build. Unlike Yandex, VK does not
+  inject its own SDK when hosting the game - the game has to ship the
+  library itself, so it's loaded here from VK's own CDN build. Outside a
+  VK/OK iframe this script still loads fine (it's a public CDN file) but
+  never does anything - js/vk.js checks the resulting `vkBridge` global
+  and a real handshake with the host page before treating VK as present,
+  so this is a harmless no-op on Yandex Games, RuStore and local testing.
+-->
+<script src="js/vendor/vk-bridge.min.js"></script>
+<script src="js/vk.js"></script>
+<script src="js/leaderboard.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

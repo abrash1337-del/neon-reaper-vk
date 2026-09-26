@@ -1,0 +1,364 @@
+/* Self-hosted fonts (bundled in assets/fonts/) - the game must be fully
+   offline/self-contained for Yandex Games moderation, so no @import or
+   any other reference to an external font/CDN service is allowed here. */
+@font-face { font-family: 'Orbitron'; font-style: normal; font-weight: 500; font-display: swap; src: url('assets/fonts/Orbitron-500.ttf') format('truetype'); }
+@font-face { font-family: 'Orbitron'; font-style: normal; font-weight: 700; font-display: swap; src: url('assets/fonts/Orbitron-700.ttf') format('truetype'); }
+@font-face { font-family: 'Orbitron'; font-style: normal; font-weight: 900; font-display: swap; src: url('assets/fonts/Orbitron-900.ttf') format('truetype'); }
+@font-face { font-family: 'Rajdhani'; font-style: normal; font-weight: 500; font-display: swap; src: url('assets/fonts/Rajdhani-500.ttf') format('truetype'); }
+@font-face { font-family: 'Rajdhani'; font-style: normal; font-weight: 600; font-display: swap; src: url('assets/fonts/Rajdhani-600.ttf') format('truetype'); }
+@font-face { font-family: 'Rajdhani'; font-style: normal; font-weight: 700; font-display: swap; src: url('assets/fonts/Rajdhani-700.ttf') format('truetype'); }
+
+:root {
+  --cyan: #39f6ff;
+  --magenta: #ff2fd0;
+  --purple: #8a3ffc;
+  --yellow: #f9f871;
+  --red: #ff3b5c;
+  --orange: #ff8a3d;
+  --green: #3dffb0;
+  --bg0: #05040c;
+  --bg1: #0b0818;
+  --white: #f4f4ff;
+  --gold: #ffd23f;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: var(--bg0);
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh / rubber-band scroll over the game */
+  font-family: 'Rajdhani', sans-serif;
+  color: var(--white);
+  user-select: none;
+  -webkit-touch-callout: none; /* no iOS long-press context menu */
+  -webkit-user-select: none;
+  touch-action: none; /* the app shell itself never scrolls/zooms via gesture */
+}
+
+#app { position: fixed; inset: 0; }
+
+#game { position: absolute; inset: 0; display: block; cursor: crosshair; touch-action: none; }
+
+.hidden { display: none !important; }
+
+/* ---------------- Screens / menus ---------------- */
+.screen {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(20,10,40,0.55) 0%, rgba(5,4,12,0.92) 75%);
+  z-index: 10;
+  animation: fadeIn 0.25s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.panel {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 40px 48px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 88vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y; /* re-enable touch scroll for this one scrollable panel */
+  background: linear-gradient(180deg, rgba(20,14,40,0.7), rgba(10,8,24,0.7));
+  border: 1px solid rgba(57,246,255,0.25);
+  border-radius: 14px;
+  box-shadow: 0 0 40px rgba(138,63,252,0.25), inset 0 0 30px rgba(57,246,255,0.05);
+  backdrop-filter: blur(6px);
+}
+
+.btn-list { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+
+.currency-label {
+  font-family: 'Orbitron', sans-serif; font-size: 15px; color: var(--yellow);
+  text-shadow: 0 0 8px rgba(249,248,113,0.5); letter-spacing: 1px; margin: 0 0 4px;
+}
+.currency-hint {
+  font-size: 12px; color: rgba(255,255,255,0.55); letter-spacing: 0.2px;
+  margin: 0 0 12px; line-height: 1.4;
+}
+.upgrade-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 10px 14px;
+  background: rgba(57,246,255,0.06); border: 1px solid rgba(57,246,255,0.25);
+  border-radius: 8px;
+}
+.upgrade-info { display: flex; flex-direction: column; gap: 2px; text-align: left; flex: 1 1 150px; min-width: 150px; }
+.upgrade-name { font-family: 'Orbitron', sans-serif; font-size: 13px; letter-spacing: 1px; overflow-wrap: break-word; }
+.upgrade-level { color: var(--cyan); opacity: 0.8; font-size: 11px; margin-left: 6px; }
+.upgrade-desc { font-size: 12px; opacity: 0.65; overflow-wrap: break-word; }
+.iap-price { color: var(--yellow); opacity: 0.9; font-size: 12px; }
+.btn.btn-buy {
+  width: auto; flex-shrink: 0; padding: 8px 12px; font-size: 12px;
+  border-color: var(--yellow); background: rgba(249,248,113,0.1); color: var(--yellow);
+}
+.btn-buy:hover { box-shadow: 0 0 14px rgba(249,248,113,0.5); }
+.btn-buy:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
+.upgrade-row.maxed .btn-buy { opacity: 0.35; }
+
+.difficulty-label, .shop-section-label {
+  font-family: 'Orbitron', sans-serif; font-size: 12px; letter-spacing: 2px;
+  opacity: 0.6; margin: 6px 0 -2px; width: 100%; text-align: left;
+}
+.skin-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  margin-right: 8px; vertical-align: middle;
+  box-shadow: 0 0 6px currentColor;
+}
+.difficulty-row { display: flex; gap: 8px; width: 100%; justify-content: center; flex-wrap: wrap; }
+.diff-btn {
+  flex: 1 1 0; min-width: 70px; padding: 8px 6px; font-size: 11px; letter-spacing: 1px;
+  font-family: 'Rajdhani', sans-serif; font-weight: 700; text-transform: uppercase;
+  color: var(--white); background: rgba(244,244,255,0.06);
+  border: 1px solid rgba(244,244,255,0.2); border-radius: 8px; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.diff-btn:hover { border-color: var(--cyan); box-shadow: 0 0 10px rgba(57,246,255,0.3); }
+.diff-btn.active {
+  color: var(--bg0); background: var(--cyan); border-color: var(--cyan);
+  box-shadow: 0 0 14px rgba(57,246,255,0.6);
+}
+
+.title {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 900;
+  font-size: 44px;
+  margin: 0;
+  letter-spacing: 4px;
+  color: var(--white);
+  text-shadow: 0 0 12px var(--cyan), 0 0 34px var(--magenta), 0 0 60px var(--purple);
+}
+.subtitle { margin: 0 0 8px; opacity: 0.75; text-align: center; font-size: 15px; }
+
+h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 24px;
+  letter-spacing: 2px;
+  margin: 0 0 4px;
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(57,246,255,0.6);
+}
+
+.btn {
+  width: 100%;
+  padding: 14px 18px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--white);
+  background: rgba(57,246,255,0.06);
+  border: 1px solid rgba(57,246,255,0.4);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.btn:hover {
+  background: rgba(57,246,255,0.16);
+  box-shadow: 0 0 18px rgba(57,246,255,0.5);
+  transform: translateY(-1px);
+}
+.btn small { font-family: 'Rajdhani', sans-serif; opacity: 0.65; font-weight: 500; letter-spacing: 0; font-size: 12px; }
+.btn-primary { border-color: var(--magenta); background: rgba(255,47,208,0.12); }
+.btn-primary:hover { box-shadow: 0 0 20px rgba(255,47,208,0.55); }
+.btn-ghost { opacity: 0.7; border-color: rgba(244,244,255,0.25); }
+.btn-mode { text-align: center; }
+
+.howto-list { list-style: none; padding: 0; margin: 0; width: 100%; }
+.howto-list li { padding: 6px 0; border-bottom: 1px dashed rgba(57,246,255,0.15); font-size: 14px; }
+.howto-note { font-size: 13px; opacity: 0.7; text-align: center; margin: 4px 0 0; }
+
+#leaderboard-list { list-style: none; padding: 0; margin: 0; width: 100%; max-height: 320px; overflow-y: auto; }
+#leaderboard-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+.lb-rank { font-family: 'Orbitron', sans-serif; color: var(--yellow); width: 24px; }
+.lb-name { flex: 1; }
+.lb-mode { font-size: 11px; opacity: 0.55; letter-spacing: 0.5px; border: 1px solid rgba(244,244,255,0.2); border-radius: 4px; padding: 2px 6px; }
+.lb-score { color: var(--cyan); font-weight: 700; }
+.lb-empty, .lb-loading { opacity: 0.6; justify-content: center; }
+
+#gameover-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 18px; margin: 4px 0; }
+#gameover-stats .stat { display: flex; flex-direction: column; align-items: center; }
+#gameover-stats .stat span { font-size: 12px; opacity: 0.6; letter-spacing: 1px; }
+#gameover-stats .stat b { font-family: 'Orbitron', sans-serif; font-size: 20px; color: var(--yellow); text-shadow: 0 0 10px rgba(249,248,113,0.5); }
+
+#name-input {
+  width: 100%; padding: 10px 12px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(57,246,255,0.35);
+  border-radius: 6px;
+  color: var(--white);
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 2px;
+  text-align: center;
+  font-size: 14px;
+}
+
+/* ---------------- HUD ---------------- */
+#hud { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+#hud-top {
+  position: absolute; top: 16px; left: 16px; right: 16px;
+  display: flex; align-items: center; gap: 16px;
+  font-family: 'Orbitron', sans-serif;
+}
+#hp-bar {
+  width: 220px; height: 16px;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,59,92,0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 0 10px rgba(255,59,92,0.3);
+}
+#hp-fill {
+  height: 100%; width: 100%;
+  background: linear-gradient(90deg, #ff3b5c, #ff8a3d);
+  transition: width 0.15s ease;
+}
+#level-label { font-size: 14px; letter-spacing: 2px; opacity: 0.85; }
+#timer-label {
+  font-size: 16px; letter-spacing: 1px; color: var(--cyan);
+  text-shadow: 0 0 8px rgba(57,246,255,0.5);
+}
+#timer-label.low { color: var(--red); text-shadow: 0 0 10px rgba(255,59,92,0.7); animation: timerPulse 0.6s ease infinite; }
+@keyframes timerPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+#combo-label {
+  font-size: 20px; color: var(--yellow);
+  text-shadow: 0 0 8px rgba(249,248,113,0.6);
+  transition: transform 0.1s ease;
+}
+#combo-label.hot { color: var(--magenta); text-shadow: 0 0 14px var(--magenta); transform: scale(1.15); }
+#score-label { margin-left: auto; font-size: 18px; color: var(--cyan); text-shadow: 0 0 8px rgba(57,246,255,0.5); }
+
+/* Always-visible HUD pause button (desktop mouse + mobile tap alike) -
+   VK moderation requires a way to reach the exit-to-menu screen (screen-pause
+   -> "quit-menu") directly during gameplay, not only via the ESC/P keyboard
+   shortcut and not only on touch devices (see .touch-btn-pause, which only
+   shows once TouchControls.active). */
+.hud-pause-btn {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: rgba(244,244,255,0.1);
+  border: 1px solid rgba(244,244,255,0.4);
+  color: var(--white);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hud-pause-btn:hover { background: rgba(244,244,255,0.2); }
+/* On touch devices the dedicated round pause button (#btn-pause in
+   #touch-controls) already covers this in the top-right corner - avoid
+   showing two overlapping pause controls there. */
+body.touch-active .hud-pause-btn { display: none; }
+
+#boss-hp-wrap {
+  position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+  width: min(520px, 70vw);
+  text-align: center;
+  font-family: 'Orbitron', sans-serif;
+}
+#boss-name { font-size: 13px; letter-spacing: 3px; color: var(--red); margin-bottom: 4px; text-shadow: 0 0 8px rgba(255,59,92,0.6); }
+#boss-hp-bar { height: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,59,92,0.5); border-radius: 4px; overflow: hidden; }
+#boss-hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #8a3ffc, #ff3b5c); transition: width 0.15s ease; }
+
+#weapon-bar {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; gap: 5px;
+  width: max-content; max-width: 94vw;
+  justify-content: center;
+  pointer-events: auto;
+}
+.weapon-slot { cursor: pointer; }
+.weapon-slot {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 56px; height: 40px;
+  background: rgba(10,8,24,0.7);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  font-size: 9px;
+  gap: 2px;
+  opacity: 0.55;
+}
+.weapon-slot .wkey { font-family: 'Orbitron', sans-serif; font-size: 11px; color: var(--cyan); }
+.weapon-slot.active { opacity: 1; border-color: var(--cyan); box-shadow: 0 0 14px rgba(57,246,255,0.5); }
+.weapon-slot.unavailable { opacity: 0.25; filter: grayscale(1); }
+.weapon-slot.locked { opacity: 0.3; filter: grayscale(1); border-style: dashed; }
+.weapon-slot.locked .wname { letter-spacing: 2px; }
+
+#controls-hint {
+  position: absolute; bottom: 112px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; opacity: 0.45; letter-spacing: 0.5px; white-space: nowrap;
+}
+
+#level-banner {
+  position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+  font-family: 'Orbitron', sans-serif;
+  font-size: 28px; letter-spacing: 4px;
+  color: var(--white);
+  text-shadow: 0 0 16px var(--cyan), 0 0 40px var(--magenta);
+  z-index: 6; pointer-events: none;
+  opacity: 0;
+}
+#level-banner.banner-anim { animation: bannerPop 1.8s ease; }
+@keyframes bannerPop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  15% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------------- Touch controls (mobile) ---------------- */
+#touch-controls {
+  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+}
+.joystick {
+  position: absolute; bottom: 28px;
+  width: 108px; height: 108px; border-radius: 50%;
+  background: rgba(57,246,255,0.06);
+  border: 1px solid rgba(57,246,255,0.35);
+  box-shadow: 0 0 20px rgba(57,246,255,0.15), inset 0 0 20px rgba(57,246,255,0.08);
+  pointer-events: auto;
+  touch-action: none;
+}
+#stick-move { left: 24px; }
+#stick-aim { right: 24px; border-color: rgba(255,47,208,0.35); background: rgba(255,47,208,0.06); box-shadow: 0 0 20px rgba(255,47,208,0.15), inset 0 0 20px rgba(255,47,208,0.08); }
+.joystick-thumb {
+  position: absolute; left: 50%; top: 50%;
+  width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(244,244,255,0.18);
+  border: 1px solid rgba(244,244,255,0.4);
+  transition: transform 0.05s linear;
+}
+.touch-btn {
+  position: absolute; width: 56px; height: 56px; border-radius: 50%;
+  font-size: 20px; line-height: 1;
+  background: rgba(249,248,113,0.1); border: 1px solid rgba(249,248,113,0.4);
+  color: var(--yellow);
+  pointer-events: auto; touch-action: none;
+}
+#btn-dash { right: 148px; bottom: 152px; }
+#btn-throw { right: 44px; bottom: 152px; }
+.touch-btn-pause {
+  width: 44px; height: 44px; font-size: 16px;
+  top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px;
+  background: rgba(244,244,255,0.1); border-color: rgba(244,244,255,0.4); color: var(--white);
+}
+
+@media (max-width: 640px) {
+  .title { font-size: 32px; }
+  .panel { padding: 28px 22px; }
+  #hp-bar { width: 140px; }
+  #controls-hint { display: none; }
+}
+
+body.touch-active #controls-hint { display: none; }
+body.touch-active #weapon-bar { bottom: 132px; }
