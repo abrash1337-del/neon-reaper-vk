@@ -23,6 +23,7 @@ const Game = {
   waveState: 'fighting', // fighting | bossfight | cleared | awaiting-perk
   levelTransitionTimer: 0,
   checkpoint: null,
+  levelTime: 0, levelTimeMax: 0, // per-level countdown for deep levels (see LEVEL_TIMER in config.js), 0 = none
   timeLimit: 0, timeRemaining: 0, // Time Attack countdown, seconds (0 = no clock)
   pendingUnlockName: null, // set right before a level-start banner that should announce a new base weapon
   spawnQueue: [], spawnTimer: 0, // enemies still waiting to trickle in once Game.enemies drops below the mode's cap
@@ -54,6 +55,10 @@ function showRewardedAny() { return Yandex.ready ? Yandex.showRewardedAdv() : VK
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let viewW = window.innerWidth, viewH = window.innerHeight;
+// World zoom: on small screens (phones) the arena is drawn scaled down so the
+// player sees a comparable area of the map as on desktop. worldW/worldH is
+// the visible world-space rectangle (viewW/worldScale).
+let worldScale = 1, worldW = viewW, worldH = viewH;
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -64,6 +69,12 @@ function resize() {
   // doesn't itself fire a 'resize' DOM event on this document.
   viewW = document.documentElement.clientWidth || window.innerWidth;
   viewH = document.documentElement.clientHeight || window.innerHeight;
+  worldScale = Utils.clamp(Math.min(viewW / 1000, viewH / 600), 0.6, 1);
+  worldW = viewW / worldScale;
+  worldH = viewH / worldScale;
+  document.body.classList.toggle('portrait', viewH > viewW);
+  document.body.classList.toggle('short', viewH < 460);
+  document.body.classList.toggle('narrow', viewW < 520);
   canvas.width = Math.floor(viewW * dpr);
   canvas.height = Math.floor(viewH * dpr);
   canvas.style.width = viewW + 'px';
@@ -220,9 +231,23 @@ const TouchControls = {
   aimAngle: 0,
   aiming: false,
 
+  bound: false,
   init() {
     const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-    if (!isTouch) return;
+    if (!isTouch) {
+      // Some phone webviews (VK app) report no touch support at boot - if a
+      // real touch ever arrives, switch the touch UI on at that moment.
+      if (!this._lateHook) {
+        this._lateHook = true;
+        window.addEventListener('touchstart', () => { if (!this.bound) this.init2(); }, { once: true, passive: true });
+      }
+      return;
+    }
+    this.init2();
+  },
+  init2() {
+    if (this.bound) return;
+    this.bound = true;
     this.active = true;
     document.body.classList.add('touch-active');
     document.getElementById('touch-controls').classList.remove('hidden');
@@ -249,7 +274,7 @@ const TouchControls = {
   // + buttons all track their own touch identifier independently).
   bindStick(el, onMove, onEnd) {
     const thumb = el.querySelector('.joystick-thumb');
-    const maxR = 40;
+    const maxR = () => Math.max(32, el.getBoundingClientRect().width * 0.38);
     const deadZone = 0.18;
     let touchId = null;
 
@@ -258,9 +283,10 @@ const TouchControls = {
       const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
       const dx = touch.clientX - cx, dy = touch.clientY - cy;
       const len = Math.hypot(dx, dy) || 0.0001;
-      const clamped = Math.min(len, maxR);
+      const mr = maxR();
+      const clamped = Math.min(len, mr);
       thumb.style.transform = `translate(${(dx / len) * clamped}px, ${(dy / len) * clamped}px)`;
-      const mag = clamped / maxR;
+      const mag = clamped / mr;
       if (mag < deadZone) onMove(0, 0, true);
       else onMove(dx / len, dy / len, true);
     };
@@ -684,6 +710,7 @@ function startRun(mode) {
   if (Meta.hasPurchase('starter_pack')) Game.player.unlockWeapon('reaper_scythe');
   Game.player.skin = SKINS.find(s => s.id === Meta.getSelectedSkin()) || SKINS[0];
 
+  _lastWeaponId = null;
   buildWeaponBar();
   beginLevel(1);
   Game.state = 'playing';
@@ -747,6 +774,17 @@ function beginLevel(level) {
     Music.setMood('gameplay');
   }
   Game.groundWarnings.length = 0;
+
+  // ---- per-level time limit on deep levels ----
+  Game.levelTime = 0; Game.levelTimeMax = 0;
+  if (cfg.timeLimit <= 0 && level >= LEVEL_TIMER.startLevel) {
+    const diffMult = LEVEL_TIMER.diffMult[Game.difficulty.id] || 1;
+    let secs;
+    if (Game.boss) secs = LEVEL_TIMER.bossTime;
+    else secs = Utils.clamp(LEVEL_TIMER.base + LEVEL_TIMER.perEnemy * (Game.enemies.length + Game.spawnQueue.length), LEVEL_TIMER.min, LEVEL_TIMER.max);
+    Game.levelTimeMax = Math.round(secs * diffMult);
+    Game.levelTime = Game.levelTimeMax;
+  }
 
   if (cfg.checkpointEvery > 0 && Level.isCheckpointLevel(level, cfg.checkpointEvery)) {
     Game.checkpoint = { level, score: Game.player.score };
@@ -831,11 +869,11 @@ function endRun(reason) {
   // actually available (Yandex or VK), and only before the player has
   // already used it this run ----
   const reviveBtn = document.getElementById('btn-revive-ad');
-  const canOfferRevive = reason === 'death' && adsReady() && !Game.revivedThisRun;
+  const canOfferRevive = (reason === 'death' || reason === 'leveltime') && adsReady() && !Game.revivedThisRun;
   reviveBtn.classList.toggle('hidden', !canOfferRevive);
 
   const title = document.getElementById('gameover-title');
-  title.textContent = reason === 'death' ? Lang.t('deathTitle') : reason === 'timeup' ? Lang.t('timeupTitle') : Lang.t('overTitle');
+  title.textContent = reason === 'death' ? Lang.t('deathTitle') : (reason === 'timeup' || reason === 'leveltime') ? Lang.t('timeupTitle') : Lang.t('overTitle');
   const stats = document.getElementById('gameover-stats');
   const modeName = Lang.short(GAME_MODES[Game.mode] || GAME_MODES.hardcore);
   const earned = currencyForRun(Game.player, Game.level);
@@ -904,6 +942,7 @@ async function reviveViaAd() {
   p.alive = true;
   p.hp = Math.round(p.maxHp * 0.5);
   p.invuln = 1.5;
+  if (Game.levelTimeMax > 0) Game.levelTime = Math.max(30, Math.round(Game.levelTimeMax * 0.4));
   Game.state = 'playing';
   showScreen(null);
   Music.setMood(Game.boss ? 'boss' : 'gameplay');
@@ -943,9 +982,17 @@ function buildWeaponBar() {
     slot.dataset.weaponId = w.id;
     slot.dataset.weaponIndex = i;
     slot.innerHTML = `<span class="wkey">${(i + 1) % 10}</span><span class="wname">${Lang.name(w)}</span>`;
-    slot.addEventListener('click', () => {
-      if (Game.state === 'playing' && Game.player) Game.player.switchWeaponTo(i);
-    });
+    // touchstart (not just click): with both thumbs already on the sticks a
+    // third finger's tap is not reliably turned into a 'click' by mobile
+    // browsers, so the weapon could not be switched mid-fight. touchstart
+    // fires immediately for every new finger. preventDefault stops the
+    // follow-up synthetic click from switching twice.
+    slot.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectWeaponSlot(i);
+    }, { passive: false });
+    slot.addEventListener('click', () => selectWeaponSlot(i));
     bar.appendChild(slot);
   });
 
@@ -957,6 +1004,23 @@ function buildWeaponBar() {
     bar.appendChild(slot);
   });
 }
+function selectWeaponSlot(i) {
+  if (Game.state === 'playing' && Game.player) Game.player.switchWeaponTo(i);
+}
+
+// Small floating weapon-name label (touch screens hide the names on the
+// compact bar, so announce the weapon whenever it changes).
+let _lastWeaponId = null;
+function showWeaponToast(w) {
+  const el = document.getElementById('weapon-toast');
+  if (!el) return;
+  el.textContent = Lang.name(w);
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(showWeaponToast._t);
+  showWeaponToast._t = setTimeout(() => el.classList.remove('show'), 1100);
+}
 function updateWeaponBar() {
   const p = Game.player;
   const bar = document.getElementById('weapon-bar');
@@ -965,6 +1029,10 @@ function updateWeaponBar() {
     el.classList.toggle('active', !!p.weapon && id === p.weapon.id);
     el.classList.toggle('unavailable', p.thrownWeaponId === id);
   });
+  if (p.weapon && p.weapon.id !== _lastWeaponId) {
+    if (_lastWeaponId !== null) showWeaponToast(p.weapon);
+    _lastWeaponId = p.weapon.id;
+  }
 }
 
 // ---------------------------------------------------------------
@@ -1400,10 +1468,27 @@ function update(dt) {
     if (Game.timeRemaining <= 0) { Game.timeRemaining = 0; endRun('timeup'); }
   }
 
+  // ---- per-level countdown (deep levels) ----
+  if (Game.levelTimeMax > 0 && Game.state === 'playing' && (Game.waveState === 'fighting' || Game.waveState === 'bossfight')) {
+    Game.levelTime -= dt;
+    if (Game.levelTime <= 0) {
+      Game.levelTime = 0;
+      if (Game.checkpoint) {
+        const cp = Game.checkpoint;
+        p.alive = true; p.hp = p.maxHp; p.score = cp.score;
+        beginLevel(cp.level);
+        showLevelBanner(Lang.t('checkpointRevive'));
+        Sfx.checkpoint();
+      } else {
+        endRun('leveltime');
+      }
+    }
+  }
+
   updateHud();
 }
 
-function screenToWorld(sx, sy) { return { x: sx + Game.camera.x, y: sy + Game.camera.y }; }
+function screenToWorld(sx, sy) { return { x: sx / worldScale + Game.camera.x, y: sy / worldScale + Game.camera.y }; }
 
 function updateHud() {
   const p = Game.player;
@@ -1413,6 +1498,15 @@ function updateHud() {
     const timerEl = document.getElementById('timer-label');
     timerEl.textContent = Utils.formatTime(Math.max(0, Game.timeRemaining));
     timerEl.classList.toggle('low', Game.timeRemaining <= 20);
+  }
+  const ltEl = document.getElementById('level-timer');
+  if (ltEl) {
+    const show = Game.levelTimeMax > 0;
+    ltEl.classList.toggle('hidden', !show);
+    if (show) {
+      ltEl.textContent = '⏱ ' + Utils.formatTime(Math.max(0, Math.ceil(Game.levelTime)));
+      ltEl.classList.toggle('low', Game.levelTime <= LEVEL_TIMER.lowSeconds);
+    }
   }
   document.getElementById('combo-label').textContent = 'x' + p.combo;
   document.getElementById('combo-label').classList.toggle('hot', p.combo >= 5);
@@ -1438,8 +1532,8 @@ function render() {
   if (Game.state !== 'playing' && Game.state !== 'paused') return;
 
   const p = Game.player;
-  Game.camera.x = clampCameraAxis(p.x - viewW / 2, viewW, Balance.arenaW);
-  Game.camera.y = clampCameraAxis(p.y - viewH / 2, viewH, Balance.arenaH);
+  Game.camera.x = clampCameraAxis(p.x - worldW / 2, worldW, Balance.arenaW);
+  Game.camera.y = clampCameraAxis(p.y - worldH / 2, worldH, Balance.arenaH);
 
   ctx.save();
   let sx = 0, sy = 0;
@@ -1447,6 +1541,7 @@ function render() {
     sx = (Math.random() - 0.5) * Game.shake.mag;
     sy = (Math.random() - 0.5) * Game.shake.mag;
   }
+  ctx.scale(worldScale, worldScale);
   ctx.translate(-Game.camera.x + sx, -Game.camera.y + sy);
 
   drawArenaFloor();
@@ -2009,21 +2104,48 @@ async function reconcileVkPurchases() {
   }
 }
 
-async function boot() {
-  await Yandex.init();
-  await VK.init();
-  await Monetization.init();
-  await reconcilePurchases();
-  await reconcileVkPurchases();
-  Lang.detect();
+// Resolves with `fallback` if the promise takes longer than `ms` (or rejects)
+// - a slow/hung platform SDK or the free-tier backend must never be able to
+// freeze the UI. The underlying promise keeps running in the background.
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms))
+  ]);
+}
+
+function buildAllUi() {
   Lang.applyStaticText();
-  TouchControls.init();
   Game.selectedDifficulty = loadDifficultyId();
   buildWeaponBar();
   buildModeSelect();
   buildDifficultyRow();
+}
+
+async function boot() {
+  // 1) UI first: the menu, mode list, difficulty row and touch controls are
+  //    built and clickable immediately, without waiting for any SDK/network.
+  //    (Previously boot() awaited Yandex/VK init AND a request to the backend
+  //    first, so on phones the difficulty buttons did nothing for a while.)
+  Lang.detect();
+  TouchControls.init();
+  buildAllUi();
   showScreen('screen-menu');
-  Yandex.gameReady();
   requestAnimationFrame(loop);
+
+  // 2) Platform SDKs in the background, each with a timeout.
+  await withTimeout(Yandex.init(), 5000);
+  await withTimeout(VK.init(), 6000);
+  await withTimeout(Monetization.init(), 4000);
+
+  // The SDK may know the real language (Yandex) - re-apply if it changed.
+  const prevLang = Lang.current;
+  Lang.detect();
+  if (Lang.current !== prevLang) buildAllUi();
+  Yandex.gameReady();
+
+  // 3) Purchase reconciliation never blocks anything.
+  withTimeout(reconcilePurchases(), 15000);
+  withTimeout(reconcileVkPurchases(), 20000);
 }
 boot();

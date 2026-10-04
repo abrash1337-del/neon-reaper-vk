@@ -238,6 +238,18 @@ const GAME_MODES = {
 };
 const GAME_MODE_ORDER = ['hardcore', 'practice', 'timeattack', 'survival', 'frenzy'];
 
+// Per-level countdown for deep levels: from `startLevel` on, every level has
+// a limited time to clear it (enemies + boss). Time = base + perEnemy * enemies,
+// clamped to [min, max], then scaled by difficulty. Running out ends the run
+// (or, in modes with checkpoints, sends you back to the last checkpoint).
+// Not used in Time Attack - it already has its own global clock.
+const LEVEL_TIMER = {
+  startLevel: 8,
+  base: 40, perEnemy: 0.9, min: 55, max: 110, bossTime: 100,
+  diffMult: { easy: 1.3, normal: 1, hard: 0.9, nightmare: 0.8 },
+  lowSeconds: 10
+};
+
 // Difficulty: an orthogonal multiplier layered on top of whichever mode is
 // picked (mode = ruleset, difficulty = how hard that ruleset hits back).
 // Chosen once on the mode-select screen, remembered between runs. Applied
