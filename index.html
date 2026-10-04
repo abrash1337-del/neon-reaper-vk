@@ -25,6 +25,7 @@
       <div id="hp-bar"><div id="hp-fill"></div></div>
       <div id="level-label">УРОВЕНЬ 1</div>
       <div id="timer-label" class="hidden">3:00</div>
+      <div id="level-timer" class="hidden">⏱ 1:00</div>
       <div id="combo-label">x0</div>
       <div id="score-label">0</div>
       <button id="btn-pause-hud" class="hud-pause-btn" aria-label="pause" title="Пауза">⏸</button>
@@ -37,6 +38,7 @@
     <div id="controls-hint">WASD — движение · ЛКМ — атака · ПКМ/F — бросить оружие · ПРОБЕЛ — рывок · ESC — пауза</div>
   </div>
   <div id="level-banner" class="hidden"></div>
+  <div id="weapon-toast"></div>
 
   <!-- ================= Touch controls (mobile only, shown via JS) ================= -->
   <div id="touch-controls" class="hidden">
@@ -64,9 +66,9 @@
   <div id="screen-modeselect" class="screen hidden">
     <div class="panel">
       <h2 data-i18n="chooseMode">ВЫБЕРИТЕ РЕЖИМ</h2>
-      <div id="mode-list" class="btn-list"></div>
       <div class="difficulty-label" data-i18n="difficulty">СЛОЖНОСТЬ</div>
       <div id="difficulty-row" class="difficulty-row"></div>
+      <div id="mode-list" class="btn-list"></div>
       <button class="btn btn-ghost" data-action="back-menu" data-i18n="back">Назад</button>
     </div>
   </div>
