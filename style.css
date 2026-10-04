@@ -502,3 +502,5 @@ body.short #gameover-stats .stat b { font-size: 16px; }
 .social-row .btn { flex: 1 1 0; padding: 10px 8px; font-size: 12px; letter-spacing: 1px; }
 .btn-social { border-color: rgba(57,246,255,0.55); background: rgba(57,246,255,0.1); }
 body.short .social-row .btn { padding: 6px 6px; font-size: 11px; }
+.author-credit { margin-top: 4px; font-size: 12px; letter-spacing: 1px; opacity: 0.5; text-align: center; }
+body.short .author-credit { margin-top: 0; font-size: 11px; }
