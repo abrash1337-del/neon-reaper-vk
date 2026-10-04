@@ -496,3 +496,9 @@ body.short #gameover-stats .stat b { font-size: 16px; }
   .panel { padding: 22px 16px; }
   #level-banner { font-size: 20px; letter-spacing: 2px; width: 92vw; text-align: center; }
 }
+
+/* VK social buttons (invite / favorites / share) - shown only inside VK */
+.social-row { display: flex; gap: 8px; width: 100%; }
+.social-row .btn { flex: 1 1 0; padding: 10px 8px; font-size: 12px; letter-spacing: 1px; }
+.btn-social { border-color: rgba(57,246,255,0.55); background: rgba(57,246,255,0.1); }
+body.short .social-row .btn { padding: 6px 6px; font-size: 11px; }

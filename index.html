@@ -59,6 +59,10 @@
       <button class="btn" data-action="shop" data-i18n="shop">МАГАЗИН</button>
       <button class="btn" data-action="howtoplay" data-i18n="controls">УПРАВЛЕНИЕ</button>
       <button class="btn" data-action="leaderboard" data-i18n="leaderboard">ТАБЛИЦА ЛИДЕРОВ</button>
+      <div class="social-row vk-only hidden">
+        <button class="btn btn-social" data-action="vk-invite" data-i18n="inviteFriends">ПОЗВАТЬ ДРУЗЕЙ</button>
+        <button class="btn btn-social" id="btn-favorite" data-action="vk-favorite" data-i18n="addFavorite">В ИЗБРАННОЕ</button>
+      </div>
     </div>
   </div>
 
@@ -151,6 +155,7 @@
       <div id="gameover-stats"></div>
       <button class="btn btn-primary hidden" id="btn-revive-ad" data-action="revive-ad" data-i18n="reviveAd">СМОТРЕТЬ РЕКЛАМУ И ВОСКРЕСНУТЬ</button>
       <input id="name-input" maxlength="16" data-i18n-placeholder="namePlaceholder" placeholder="ВАШЕ ИМЯ">
+      <button class="btn btn-social vk-only hidden" data-action="vk-share" data-i18n="shareRecord">ПОДЕЛИТЬСЯ РЕКОРДОМ</button>
       <button class="btn btn-primary" data-action="submit-restart" data-i18n="restart">ЗАНОВО</button>
       <button class="btn btn-ghost" data-action="submit-menu" data-i18n="toMenu">В МЕНЮ</button>
     </div>
