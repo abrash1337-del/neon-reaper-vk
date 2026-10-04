@@ -148,6 +148,33 @@ const VK = {
     } catch (e) { return false; }
   },
 
+  // --- Social: invite / share / favorites -----------------------------
+  // All best-effort and VK-only (callers hide the buttons unless VK.ready).
+  appLink() {
+    const id = (this.launchParams && this.launchParams.vk_app_id) || 54755987;
+    return 'https://vk.com/app' + id;
+  },
+  async inviteFriends() {
+    if (!this.ready) return false;
+    try { const r = await this.bridge.send('VKWebAppShowInviteBox', {}); return !!r; }
+    catch (e) {
+      // Older clients / no friends access: fall back to the generic share dialog.
+      try { await this.bridge.send('VKWebAppShare', { link: this.appLink() }); return true; } catch (e2) { return false; }
+    }
+  },
+  async shareWallPost(message) {
+    if (!this.ready) return false;
+    try { const r = await this.bridge.send('VKWebAppShowWallPostBox', { message, attachments: this.appLink() }); return !!r; }
+    catch (e) {
+      try { await this.bridge.send('VKWebAppShare', { link: this.appLink() }); return true; } catch (e2) { return false; }
+    }
+  },
+  async addToFavorites() {
+    if (!this.ready) return false;
+    try { const r = await this.bridge.send('VKWebAppAddToFavorites', {}); return !!(r && r.result !== false); }
+    catch (e) { return false; }
+  },
+
   // --- Storage --------------------------------------------------------
   // NOT used by Meta (js/meta.js) yet - Meta still persists progression
   // to localStorage. That's fine when the game is hosted on a stable

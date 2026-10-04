@@ -381,6 +381,19 @@ function handleAction(action) {
     case 'quit-menu':
       Game.state = 'menu'; Yandex.gameplayStop(); exitFullscreenAny(); Music.setMood('menu'); Music.duck(false); showScreen('screen-menu'); break;
     case 'shop': openShop(); break;
+    case 'vk-invite': VK.inviteFriends(); break;
+    case 'vk-favorite':
+      VK.addToFavorites().then((ok) => {
+        const b = document.getElementById('btn-favorite');
+        if (ok && b) b.textContent = Lang.t('favoriteDone');
+      });
+      break;
+    case 'vk-share': {
+      const score = Game.player ? Math.floor(Game.player.score) : 0;
+      const text = Lang.t('shareText').replace('{score}', Utils.formatScore(score)).replace('{level}', Game.level);
+      VK.shareWallPost(text);
+      break;
+    }
     case 'noop': break;
     case 'submit-restart': finishGameOverFlow(() => startRun(Game.mode)); break;
     case 'submit-menu': finishGameOverFlow(() => { Game.state = 'menu'; exitFullscreenAny(); showScreen('screen-menu'); }); break;
@@ -2114,8 +2127,14 @@ function withTimeout(promise, ms, fallback = null) {
   ]);
 }
 
+// Invite / favorites / share buttons only make sense inside VK.
+function syncSocialButtons() {
+  document.querySelectorAll('.vk-only').forEach((el) => el.classList.toggle('hidden', !VK.ready));
+}
+
 function buildAllUi() {
   Lang.applyStaticText();
+  syncSocialButtons();
   Game.selectedDifficulty = loadDifficultyId();
   buildWeaponBar();
   buildModeSelect();
@@ -2136,6 +2155,7 @@ async function boot() {
   // 2) Platform SDKs in the background, each with a timeout.
   await withTimeout(Yandex.init(), 5000);
   await withTimeout(VK.init(), 6000);
+  syncSocialButtons();
   await withTimeout(Monetization.init(), 4000);
 
   // The SDK may know the real language (Yandex) - re-apply if it changed.
