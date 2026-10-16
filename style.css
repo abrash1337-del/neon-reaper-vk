@@ -504,3 +504,38 @@ body.short #gameover-stats .stat b { font-size: 16px; }
 body.short .social-row .btn { padding: 6px 6px; font-size: 11px; }
 .author-credit { margin-top: 4px; font-size: 12px; letter-spacing: 1px; opacity: 0.5; text-align: center; }
 body.short .author-credit { margin-top: 0; font-size: 11px; }
+
+/* ---- First session ---- */
+#screen-menu.first-session .menu-secondary { display: none; }
+#screen-menu.first-session #btn-play { padding: 18px 18px; font-size: 18px; }
+#screen-menu.first-session .btn[data-action="howtoplay"] { opacity: 0.6; padding: 8px 12px; font-size: 12px; }
+
+#tutorial-hint {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 150px; width: max-content; z-index: 7; max-width: min(520px, 92vw);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 10px;
+  background: rgba(10,8,24,0.78); border: 1px solid rgba(57,246,255,0.5);
+  box-shadow: 0 0 18px rgba(57,246,255,0.25);
+  font-family: 'Orbitron', sans-serif; font-size: 14px; letter-spacing: 1px; text-align: center;
+  color: var(--white); pointer-events: none;
+}
+#tutorial-text { text-shadow: 0 0 8px rgba(57,246,255,0.6); }
+.tut-skip {
+  pointer-events: auto; flex: 0 0 auto; touch-action: none;
+  background: transparent; color: rgba(244,244,255,0.6);
+  border: 1px solid rgba(244,244,255,0.3); border-radius: 6px;
+  padding: 4px 10px; font-family: 'Rajdhani', sans-serif; font-size: 13px; cursor: pointer;
+}
+.tut-skip:hover { color: var(--white); border-color: var(--white); }
+body.touch-active #tutorial-hint { bottom: calc(14px + var(--safe-b, 0px)); max-width: min(46vw, 520px); font-size: 12px; padding: 8px 10px; }
+body.touch-active.portrait #tutorial-hint { bottom: calc(14px + var(--safe-b, 0px) + var(--stick) + 62px); max-width: 94vw; }
+body.touch-active.tut-dash #btn-dash { animation: tutPulse 0.8s ease infinite; border-color: var(--cyan); box-shadow: 0 0 16px rgba(57,246,255,0.8); }
+@keyframes tutPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+
+.perk-note { font-size: 13px; opacity: 0.8; color: var(--cyan); text-align: center; margin: -4px 0 2px; }
+.gameover-note { color: var(--green); font-family: 'Orbitron', sans-serif; font-size: 13px; letter-spacing: 1px; text-align: center; }
+.gameover-goal { font-size: 14px; opacity: 0.8; text-align: center; }
+.upgrade-row.recommended { border-color: var(--yellow); box-shadow: 0 0 14px rgba(249,248,113,0.35); }
+.upgrade-row .rec-tag { color: var(--yellow); font-size: 11px; letter-spacing: 1px; margin-left: 6px; }
+body.short #tutorial-hint { padding: 6px 10px; font-size: 12px; }

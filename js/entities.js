@@ -73,6 +73,7 @@ class Player {
     this.dashTimer = 0;
     this.dashDirX = 0; this.dashDirY = 0;
     this.invuln = 0;
+    this.hpFloor = 0; // rookie protection: hp cannot drop below this (set by main.js in the guided first run)
 
     this.combo = 0;
     this.comboTimer = 0;
@@ -166,7 +167,9 @@ class Player {
 
   takeDamage(amount) {
     if (this.invuln > 0 || this.dashing || !this.alive) return false;
+    const hpBefore = this.hp;
     this.hp -= amount;
+    if (this.hpFloor > 0 && this.hp < this.hpFloor) this.hp = Math.max(this.hp, Math.min(hpBefore, this.hpFloor));
     this.combo = 0;
     this.comboTimer = 0;
     this.invuln = 0.5;

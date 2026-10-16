@@ -23,6 +23,17 @@ const Game = {
   waveState: 'fighting', // fighting | bossfight | cleared | awaiting-perk
   levelTransitionTimer: 0,
   checkpoint: null,
+  guided: false,            // true during the guided first run (see js/firstrun.js)
+  tutorial: null,           // TutorialFlow state while the guided run's tutorial is active
+  tutorialTarget: null,     // the single weak enemy of the "kill" step
+  spawnHold: false,         // holds back the rest of the first wave until the kill step is done
+  runElapsed: 0, levelStartElapsed: 0, playAccum: 0, // seconds (active play only)
+  freeReviveThisRun: false,
+  lastRun: null,            // { mode, difficultyId } of the previous run - used by "one more run"
+  upgradeFlow: false,       // true when the upgrades screen was opened from the post-run CTA
+  upgradePurchased: false,
+  scoreSubmitted: false,
+  tutorialDoneUntil: 0, moveDist: 0, assisted: false, // first-session helpers (see startGuided/ update hooks)
   levelTime: 0, levelTimeMax: 0, // per-level countdown for deep levels (see LEVEL_TIMER in config.js), 0 = none
   timeLimit: 0, timeRemaining: 0, // Time Attack countdown, seconds (0 = no clock)
   pendingUnlockName: null, // set right before a level-start banner that should announce a new base weapon
@@ -324,6 +335,21 @@ function showScreen(id) {
   });
   const hud = document.getElementById('hud');
   hud.classList.toggle('hidden', !(Game.state === 'playing' || Game.state === 'paused'));
+  if (id === 'screen-menu') {
+    syncMenuFirstSession();
+    Analytics.track('menu_view', { first_session: Meta.isFirstSession() });
+  }
+  updateTutorialUi();
+}
+
+// First session: the main menu shows one clear call to action (НАЧАТЬ) and
+// hides shop / upgrades / leaderboard until the first run is behind the player.
+function syncMenuFirstSession() {
+  const first = Meta.isFirstSession();
+  const menu = document.getElementById('screen-menu');
+  if (menu) menu.classList.toggle('first-session', first);
+  const btn = document.getElementById('btn-play');
+  if (btn) btn.textContent = first ? Lang.t('startFirst') : Lang.t('play');
 }
 
 function showLevelBanner(text) {
@@ -365,11 +391,19 @@ function onDashStart() {
   Sfx.dash();
   triggerShake(3, 0.08);
   Game.particles.burst(p.x, p.y, Palette.cyan, 10, { speed: [60, 200], life: [0.15, 0.3] });
+  Analytics.once('first_dash', { elapsed_sec: Math.round(Game.runElapsed) });
+  tutorialEvent('dash');
 }
 
 function handleAction(action) {
   switch (action) {
-    case 'play': showScreen('screen-modeselect'); break;
+    case 'play':
+      Analytics.track('play_click', { first_session: Meta.isFirstSession() });
+      if (Meta.isFirstSession()) startRun(FIRST_RUN.mode, { guided: true });
+      else showScreen('screen-modeselect');
+      break;
+    case 'go-upgrades': goUpgradesAfterRun(); break;
+    case 'quick-run': startQuickRun(); break;
     case 'upgrades': openUpgrades(); break;
     case 'howtoplay': showScreen('screen-howtoplay'); break;
     case 'leaderboard': openLeaderboard(); break;
@@ -379,6 +413,7 @@ function handleAction(action) {
     case 'toggle-sfx': Sfx.setMuted(!Sfx.muted); syncAudioButtons(); break;
     case 'revive-ad': reviveViaAd(); break;
     case 'quit-menu':
+      settleQuitRun();
       Game.state = 'menu'; Yandex.gameplayStop(); exitFullscreenAny(); Music.setMood('menu'); Music.duck(false); showScreen('screen-menu'); break;
     case 'shop': openShop(); break;
     case 'vk-invite': VK.inviteFriends(); break;
@@ -395,7 +430,10 @@ function handleAction(action) {
       break;
     }
     case 'noop': break;
-    case 'submit-restart': finishGameOverFlow(() => startRun(Game.mode)); break;
+    case 'submit-restart':
+      Analytics.track('retry_click', { run_number: Meta.getRunCount() + 1 });
+      finishGameOverFlow(() => startRun(Game.lastRun ? Game.lastRun.mode : Game.mode, Game.lastRun ? { difficultyId: Game.lastRun.difficultyId } : {}));
+      break;
     case 'submit-menu': finishGameOverFlow(() => { Game.state = 'menu'; exitFullscreenAny(); showScreen('screen-menu'); }); break;
     default:
       if (action.startsWith('mode-')) startRun(action.slice(5));
@@ -476,24 +514,49 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 // Permanent upgrades (Meta currency, see meta.js/META_UPGRADES) -
 // menu-only, applied to the Player at construction time in startRun.
 // ---------------------------------------------------------------
-function openUpgrades() {
+function openUpgrades(fromRun) {
+  Game.upgradeFlow = !!fromRun;
+  Game.upgradePurchased = false;
+  Analytics.track('upgrade_screen_view', { currency: Meta.getCurrency(), post_run: !!fromRun });
   renderUpgrades();
   showScreen('screen-upgrades');
+}
+
+// Game-over primary CTA after the first run: open upgrades with one
+// recommended purchase highlighted (never bought automatically).
+function goUpgradesAfterRun() {
+  if (!Game.scoreSubmitted && Game.player) {
+    Game.scoreSubmitted = true;
+    try { Leaderboard.submit(Game.player.score, Game.level, Game.mode).catch(() => {}); } catch (e) {}
+  }
+  openUpgrades(true);
+}
+
+function startQuickRun() {
+  const last = Game.lastRun || { mode: FIRST_RUN.mode, difficultyId: FIRST_RUN.difficulty };
+  Analytics.track('retry_click', { run_number: Meta.getRunCount() + 1, source: 'upgrades' });
+  startRun(last.mode, { difficultyId: last.difficultyId });
 }
 
 function renderUpgrades() {
   document.getElementById('upgrades-currency').textContent = `${Lang.t('currency')}: ${Meta.getCurrency()}`;
   const list = document.getElementById('upgrades-list');
   list.innerHTML = '';
+  const levelsNow = {};
+  META_UPGRADES.forEach((u) => { levelsNow[u.id] = Meta.getUpgradeLevel(u.id); });
+  const recommendedId = (Game.upgradeFlow && !Game.upgradePurchased)
+    ? FirstRun.recommendUpgrade(Meta.getCurrency(), META_UPGRADES, levelsNow, (d, l) => Meta.costFor(d, l))
+    : null;
   META_UPGRADES.forEach((def) => {
     const level = Meta.getUpgradeLevel(def.id);
     const maxed = level >= def.maxLevel;
     const cost = Meta.costFor(def, level);
     const row = document.createElement('div');
-    row.className = 'upgrade-row';
+    row.className = 'upgrade-row' + (def.id === recommendedId ? ' recommended' : '');
+    const recTag = def.id === recommendedId ? `<span class="rec-tag">★ ${Lang.t('recommended')}</span>` : '';
     row.innerHTML = `
       <div class="upgrade-info">
-        <div class="upgrade-name">${Lang.name(def)} <span class="upgrade-level">${level}/${def.maxLevel}</span></div>
+        <div class="upgrade-name">${Lang.name(def)} <span class="upgrade-level">${level}/${def.maxLevel}</span>${recTag}</div>
         <div class="upgrade-desc">${Lang.desc(def)}</div>
       </div>
       <button class="btn btn-buy" data-action="buy-${def.id}" ${maxed || Meta.getCurrency() < cost ? 'disabled' : ''}>
@@ -502,10 +565,25 @@ function renderUpgrades() {
     `;
     list.appendChild(row);
   });
+  // "ONE MORE RUN" becomes the main CTA once the player bought something
+  // (or could not afford anything) while coming from the post-run flow.
+  const quick = document.getElementById('btn-quick-run');
+  if (quick) {
+    const nothingAffordable = !META_UPGRADES.some((d) => Meta.getUpgradeLevel(d.id) < d.maxLevel && Meta.getCurrency() >= Meta.costFor(d, Meta.getUpgradeLevel(d.id)));
+    quick.classList.toggle('hidden', !(Game.upgradeFlow && (Game.upgradePurchased || nothingAffordable)));
+  }
 }
 
 function buyUpgrade(id) {
-  if (Meta.buyUpgrade(id)) { Sfx.pickup(); renderUpgrades(); }
+  const def = META_UPGRADES.find((u) => u.id === id);
+  const before = Meta.getUpgradeLevel(id);
+  const cost = def ? Meta.costFor(def, before) : 0;
+  if (Meta.buyUpgrade(id)) {
+    Sfx.pickup();
+    Game.upgradePurchased = true;
+    Analytics.track('upgrade_purchase', { id, level: before + 1, cost, post_run: Game.upgradeFlow });
+    renderUpgrades();
+  }
 }
 
 // ---------------------------------------------------------------
@@ -692,16 +770,31 @@ function syncAudioButtons() {
   document.getElementById('btn-toggle-sfx').textContent = Sfx.muted ? Lang.t('sfxOff') : Lang.t('sfxOn');
 }
 
-function pauseGame() { Game.state = 'paused'; syncAudioButtons(); showScreen('screen-pause'); Music.duck(true); }
+function pauseGame() { flushPlayTime(); Game.state = 'paused'; syncAudioButtons(); showScreen('screen-pause'); Music.duck(true); }
 function resumeGame() { Game.state = 'playing'; showScreen(null); Music.duck(false); }
 
 // ---------------------------------------------------------------
 // Run lifecycle
 // ---------------------------------------------------------------
-function startRun(mode) {
-  const cfg = GAME_MODES[mode] || GAME_MODES.hardcore;
+// opts: { guided: true }      -> the guided first run (practice + easy, tutorial)
+//       { difficultyId: 'x' } -> override the picker's difficulty (one-more-run)
+function startRun(mode, opts) {
+  opts = opts || {};
+  const guided = !!opts.guided;
+  const cfg = GAME_MODES[guided ? FIRST_RUN.mode : mode] || GAME_MODES.hardcore;
   Game.mode = cfg.id;
-  Game.difficulty = DIFFICULTIES.find(d => d.id === Game.selectedDifficulty) || DIFFICULTIES.find(d => d.id === 'normal');
+  const diffId = guided ? FIRST_RUN.difficulty : (opts.difficultyId || Game.selectedDifficulty);
+  Game.difficulty = DIFFICULTIES.find(d => d.id === diffId) || DIFFICULTIES.find(d => d.id === 'normal');
+  Game.guided = guided;
+  Game.tutorial = guided ? TutorialFlow.create() : null;
+  Game.tutorialTarget = null;
+  Game.spawnHold = false;
+  Game.runElapsed = 0; Game.levelStartElapsed = 0; Game.moveDist = 0; Game.tutorialDoneUntil = 0;
+  Game.freeReviveThisRun = false;
+  Game.scoreSubmitted = false;
+  Game.upgradeFlow = false;
+  Game.gameOverBusy = false;
+  Analytics.resetRun();
   Game.level = 1;
   Game.checkpoint = null;
   Game.timeLimit = cfg.timeLimit;
@@ -725,6 +818,13 @@ function startRun(mode) {
 
   _lastWeaponId = null;
   buildWeaponBar();
+  const runNumber = Meta.getRunCount() + 1;
+  Analytics.track('run_start', { run_number: runNumber, mode: cfg.id, difficulty: Game.difficulty.id, first_run: runNumber === 1, guided });
+  if (runNumber === 2) Analytics.track('run_2_start', { mode: cfg.id, difficulty: Game.difficulty.id });
+  if (guided) {
+    Meta.setTutorialStatus('in_progress');
+    Analytics.track('tutorial_start', { run_number: runNumber, touch: !!TouchControls.active });
+  }
   beginLevel(1);
   Game.state = 'playing';
   showScreen(null);
@@ -788,6 +888,14 @@ function beginLevel(level) {
   }
   Game.groundWarnings.length = 0;
 
+  // ---- guided first run: a softer, scripted level 1 (see js/firstrun.js) ----
+  Game.assisted = false;
+  Game.levelStartElapsed = Game.runElapsed;
+  if (Game.guided && !Game.boss) {
+    if (level === 1) setupGuidedLevel1();
+    else if (level <= FIRST_RUN.guidedLevels) applyGuidedMods(Game.enemies);
+  }
+
   // ---- per-level time limit on deep levels ----
   Game.levelTime = 0; Game.levelTimeMax = 0;
   if (cfg.timeLimit <= 0 && level >= LEVEL_TIMER.startLevel) {
@@ -799,7 +907,9 @@ function beginLevel(level) {
     Game.levelTime = Game.levelTimeMax;
   }
 
-  if (cfg.checkpointEvery > 0 && Level.isCheckpointLevel(level, cfg.checkpointEvery)) {
+  // A guided first run never gets a level-1 checkpoint: in Practice that checkpoint
+  // would resurrect the player forever, so the run (and its reward) could never end.
+  if (cfg.checkpointEvery > 0 && !(Game.guided && level <= FIRST_RUN.guidedLevels) && Level.isCheckpointLevel(level, cfg.checkpointEvery)) {
     Game.checkpoint = { level, score: Game.player.score };
   }
 }
@@ -808,6 +918,172 @@ function onStageCleared() {
   if (Game.waveState === 'cleared') return;
   Game.waveState = 'cleared';
   Game.levelTransitionTimer = 1.3;
+  const pl = Game.player;
+  Analytics.track('level_clear', {
+    level: Game.level, elapsed_sec: Math.round(Game.runElapsed),
+    level_sec: Math.round(Game.runElapsed - Game.levelStartElapsed),
+    hp_pct: pl ? Math.round(100 * pl.hp / pl.maxHp) : 0, guided: Game.guided
+  });
+  tutorialEvent('clear');
+}
+
+// ---------------------------------------------------------------
+// Guided first run + tutorial (config and pure logic live in js/firstrun.js)
+// ---------------------------------------------------------------
+function applyGuidedMods(list) {
+  list.forEach((en) => {
+    en.hp = Math.max(1, Math.round(en.hp * FIRST_RUN.enemyHpMult)); en.maxHp = en.hp;
+    en.dmgMult = (en.dmgMult || 1) * FIRST_RUN.enemyDmgMult;
+    en.speedMult = (en.speedMult || 1) * FIRST_RUN.enemySpeedMult;
+  });
+}
+
+// Level 1 of the guided run: clear space around the spawn and the corridor to
+// the target, one weak enemy ahead of the player, the rest of the (small,
+// rusher-only) wave held back until the "kill" step is done.
+function setupGuidedLevel1() {
+  const p = Game.player, R = FIRST_RUN, a = Level.arena;
+  const sx = p.x, sy = p.y;
+  const tx = sx, ty = Math.max(a.y + 120, sy - R.targetDistance);
+  Game.walls = Game.walls.filter((w, i) => {
+    if (i < 4) return true; // the arena border
+    if (Utils.circleRectOverlap(sx, sy, R.clearSpawnRadius, w)) return false;
+    for (let k = 0; k <= 8; k++) {
+      if (Utils.circleRectOverlap(sx + (tx - sx) * k / 8, sy + (ty - sy) * k / 8, 60, w)) return false;
+    }
+    return true;
+  });
+  const mode = GAME_MODES[Game.mode] || GAME_MODES.hardcore, diff = Game.difficulty;
+  const en = new Enemy('rusher', tx, ty);
+  en.speedMult = mode.enemySpeedMult * diff.speedMult * R.targetSpeedMult;
+  en.hp = Math.max(1, Math.round(en.hp * diff.hpMult * R.targetHpMult)); en.maxHp = en.hp;
+  en.dmgMult = diff.dmgMult * R.enemyDmgMult;
+  en.isTutorialTarget = true;
+  Game.tutorialTarget = en;
+  Game.enemies = [en];
+  Game.spawnQueue = Array(R.waveExtraEnemies).fill('rusher');
+  Game.spawnHold = !!(Game.tutorial && !Game.tutorial.done);
+}
+
+function releaseSpawnHold() { Game.spawnHold = false; }
+
+function tutorialText(step) {
+  const touch = !!TouchControls.active;
+  switch (step) {
+    case 'move': return Lang.t(touch ? 'tutMoveTouch' : 'tutMoveKb');
+    case 'attack': return Lang.t(touch ? 'tutAttackTouch' : 'tutAttackKb');
+    case 'kill': return Lang.t('tutKill');
+    case 'dash': return Lang.t(touch ? 'tutDashTouch' : 'tutDashKb');
+    case 'clear': return Lang.t('tutClear');
+    case 'perk': return Lang.t('tutPerkNote');
+  }
+  return '';
+}
+
+let _tutUiKey = '';
+function updateTutorialUi() {
+  const box = document.getElementById('tutorial-hint');
+  if (!box) return;
+  const t = Game.tutorial;
+  let msg = '', step = null, canSkip = false;
+  if (Game.state === 'playing' && t) {
+    if (!t.done) { step = TutorialFlow.current(t); msg = tutorialText(step); canSkip = true; }
+    else if (!t.skipped && Game.tutorialDoneUntil > Game.runElapsed) msg = Lang.t('tutDone');
+  }
+  const key = msg + '|' + canSkip + '|' + step;
+  if (key === _tutUiKey) return;
+  _tutUiKey = key;
+  box.classList.toggle('hidden', !msg);
+  document.getElementById('tutorial-text').textContent = msg;
+  document.getElementById('tutorial-skip').classList.toggle('hidden', !canSkip);
+  document.body.classList.toggle('tut-dash', step === 'dash' && !!TouchControls.active);
+}
+
+function tutorialEvent(name) {
+  const t = Game.tutorial;
+  if (!t || t.done) return;
+  const finished = TutorialFlow.event(t, name);
+  finished.forEach((s) => {
+    Analytics.track('tutorial_step', { step: s, index: TUTORIAL_STEPS.indexOf(s) + 1, elapsed_sec: Math.round(Game.runElapsed) });
+    if (s === 'kill') releaseSpawnHold();
+  });
+  if (t.done) finishTutorial(false, false);
+  else if (finished.length) updateTutorialUi();
+}
+
+function finishTutorial(skipped, auto) {
+  const t = Game.tutorial;
+  if (!t) return;
+  const step = TutorialFlow.current(t);
+  t.done = true; t.skipped = !!skipped;
+  releaseSpawnHold();
+  Meta.setTutorialStatus(skipped ? 'skipped' : 'done');
+  if (skipped) {
+    Analytics.track('tutorial_skip', { step: step || 'none', elapsed_sec: Math.round(Game.runElapsed) });
+  } else {
+    Analytics.track('tutorial_complete', { elapsed_sec: Math.round(Game.runElapsed), steps: t.completed.length, auto: !!auto });
+    Game.tutorialDoneUntil = Game.runElapsed + 2.5;
+  }
+  updateTutorialUi();
+}
+
+function skipTutorial() {
+  if (!Game.tutorial || Game.tutorial.done || Game.state !== 'playing') return;
+  finishTutorial(true, false);
+}
+
+(function bindTutorialSkip() {
+  const b = document.getElementById('tutorial-skip');
+  if (!b) return;
+  b.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); skipTutorial(); }, { passive: false });
+  b.addEventListener('click', (e) => { e.stopPropagation(); skipTutorial(); });
+})();
+
+// Active play time (seconds), persisted in Meta every ~10 s and on pause / run end.
+function flushPlayTime() {
+  try {
+    if (Game.playAccum > 0) { Meta.addActivePlaySeconds(Game.playAccum); Game.playAccum = 0; }
+  } catch (e) {}
+}
+window.addEventListener('pagehide', flushPlayTime);
+
+// Free ad-free revive, once, in the guided first run.
+function freeReviveGuided() {
+  const p = Game.player;
+  Analytics.track('revive_offer', { type: 'free', level: Game.level });
+  Meta.useFreeRevive();
+  Game.freeReviveThisRun = true;
+  p.alive = true;
+  p.hp = Math.round(p.maxHp * FIRST_RUN.revivePct);
+  p.invuln = FIRST_RUN.reviveInvuln;
+  Game.projectiles = Game.projectiles.filter((pr) => pr.owner === 'player');
+  Game.enemies.forEach((en) => {
+    const d = Utils.dist(en.x, en.y, p.x, p.y);
+    if (d < 180) { const ang = Utils.angleTo(p.x, p.y, en.x, en.y); en.x = p.x + Math.cos(ang) * 180; en.y = p.y + Math.sin(ang) * 180; }
+  });
+  Game.particles.burst(p.x, p.y, Palette.cyan, 30, { speed: [80, 260], life: [0.3, 0.7] });
+  showLevelBanner(Lang.t('protectBanner'));
+  Sfx.checkpoint();
+  Analytics.track('revive_result', { type: 'free', ok: true });
+}
+
+// Pause -> "to menu" during a run. Guided players who got past level 1 still
+// receive the guaranteed first reward (their run is counted as finished).
+function settleQuitRun() {
+  flushPlayTime();
+  const pl = Game.player;
+  if (!pl || (Game.state !== 'paused' && Game.state !== 'playing')) return;
+  const runNumber = Meta.getRunCount() + 1;
+  Analytics.track('run_end', { reason: 'quit', level: Game.level, score: Math.floor(pl.score), duration_sec: Math.round(Game.runElapsed), mode: Game.mode, difficulty: Game.difficulty.id, first_run: Game.guided, run_number: runNumber });
+  if (Game.guided && !Meta.isFirstRewardClaimed() && Game.level >= 2) {
+    const reward = FirstRun.computeReward(currencyForRun(pl, Game.level), false);
+    Meta.addCurrency(reward.total);
+    Meta.claimFirstReward();
+    Analytics.track('first_reward_granted', { shards: reward.total, bonus: reward.bonus, via: 'quit' });
+    Meta.recordRunEnd();
+    Meta.setTutorialStatus(Game.tutorial && Game.tutorial.done && !Game.tutorial.skipped ? 'done' : 'skipped');
+    Game.lastRun = { mode: FIRST_RUN.nextMode, difficultyId: FIRST_RUN.difficulty };
+  }
 }
 
 // ---------------------------------------------------------------
@@ -841,6 +1117,13 @@ function showPerkChoice() {
   // so skip the screen entirely instead of showing an empty/broken one.
   if (!offered.length) { Game.waveState = 'fighting'; Game.state = 'playing'; beginLevel(Game.level + 1); return; }
   Game.state = 'perkchoice';
+  Analytics.once('first_perk_view', { level: Game.level, elapsed_sec: Math.round(Game.runElapsed), guided: Game.guided });
+  const noteEl = document.getElementById('perk-note');
+  if (noteEl) {
+    const showNote = Game.guided && Game.level === 1;
+    noteEl.textContent = showNote ? Lang.t('tutPerkNote') : '';
+    noteEl.classList.toggle('hidden', !showNote);
+  }
   const list = document.getElementById('perk-list');
   list.innerHTML = '';
   const p = Game.player;
@@ -856,6 +1139,11 @@ function showPerkChoice() {
 }
 
 function choosePerk(id) {
+  Analytics.track('perk_selected', { perk: id, level: Game.level, elapsed_sec: Math.round(Game.runElapsed), guided: Game.guided });
+  if (Game.tutorial && !Game.tutorial.done && Game.level === 1) {
+    tutorialEvent('perk');
+    if (!Game.tutorial.done) finishTutorial(false, true); // e.g. the dash prompt was never used
+  }
   Game.player.applyPerk(id);
   Game.waveState = 'fighting';
   Game.state = 'playing';
@@ -870,6 +1158,20 @@ function currencyForRun(player, level) {
   return Math.round(player.score / 40) + level * 3;
 }
 
+// Nearest real goal for the game-over screen: next permanent weapon unlock or
+// next boss level, whichever is closer.
+function nextGoalText(level, cfg) {
+  const w = FirstRun.nextWeaponUnlock(level, WEAPONS);
+  const b = FirstRun.nextBossLevel(level, cfg.bossEvery);
+  if (w && (!b || w.level <= b)) return Lang.t('goalWeapon').replace('{n}', w.level);
+  if (b) {
+    const n = b - level;
+    const lv = Lang.current === 'ru' ? Utils.pluralRu(n, Lang.t('lvOne'), Lang.t('lvFew'), Lang.t('lvMany')) : (n === 1 ? Lang.t('lvOne') : Lang.t('lvMany'));
+    return Lang.t('goalBoss').replace('{n}', n).replace('{lv}', lv);
+  }
+  return '';
+}
+
 function endRun(reason) {
   Game.state = 'gameover';
   Game.gameOverBusy = false;
@@ -877,6 +1179,11 @@ function endRun(reason) {
   Sfx.gameover();
   Music.setMood('menu');
   Music.duck(false);
+  flushPlayTime();
+  const cfg = GAME_MODES[Game.mode] || GAME_MODES.hardcore;
+  const pl = Game.player;
+  clearTimeout(showLevelBanner._t);
+  document.getElementById('level-banner').classList.add('hidden');
 
   // ---- revive-via-ad offer: once per run, only while a platform's ads are
   // actually available (Yandex or VK), and only before the player has
@@ -884,28 +1191,79 @@ function endRun(reason) {
   const reviveBtn = document.getElementById('btn-revive-ad');
   const canOfferRevive = (reason === 'death' || reason === 'leveltime') && adsReady() && !Game.revivedThisRun;
   reviveBtn.classList.toggle('hidden', !canOfferRevive);
+  if (canOfferRevive) Analytics.track('revive_offer', { type: 'ad', level: Game.level });
 
   const title = document.getElementById('gameover-title');
   title.textContent = reason === 'death' ? Lang.t('deathTitle') : (reason === 'timeup' || reason === 'leveltime') ? Lang.t('timeupTitle') : Lang.t('overTitle');
   const stats = document.getElementById('gameover-stats');
-  const modeName = Lang.short(GAME_MODES[Game.mode] || GAME_MODES.hardcore);
-  const earned = currencyForRun(Game.player, Game.level);
-  Meta.addCurrency(earned);
+  const modeName = Lang.short(cfg);
+
+  // ---- reward: the first finished run is topped up to a guaranteed minimum (once) ----
+  const earned = currencyForRun(pl, Game.level);
+  const reward = FirstRun.computeReward(earned, Meta.isFirstRewardClaimed());
+  Meta.addCurrency(reward.total);
+  if (reward.firstReward) {
+    Meta.claimFirstReward();
+    Analytics.track('first_reward_granted', { shards: reward.total, bonus: reward.bonus, earned });
+  }
   const runCount = Meta.recordRunEnd();
+  if (Game.guided) Meta.setTutorialStatus(Game.tutorial && Game.tutorial.done && !Game.tutorial.skipped ? 'done' : 'skipped');
+  Game.lastRun = Game.guided
+    ? { mode: FIRST_RUN.nextMode, difficultyId: FIRST_RUN.difficulty }
+    : { mode: Game.mode, difficultyId: Game.difficulty.id };
+
+  Analytics.track('run_end', {
+    reason, level: Game.level, score: Math.floor(pl.score),
+    duration_sec: Math.round(Game.runElapsed), context: Game.boss ? 'boss' : 'wave',
+    enemies_left: Game.enemies.length + Game.spawnQueue.length,
+    mode: Game.mode, difficulty: Game.difficulty.id, first_run: runCount === 1, guided: Game.guided, run_number: runCount
+  });
+
   stats.innerHTML = `
-    <div class="stat"><span>${Lang.t('statScore')}</span><b>${Utils.formatScore(Game.player.score)}</b></div>
+    <div class="stat"><span>${Lang.t('statScore')}</span><b>${Utils.formatScore(pl.score)}</b></div>
     <div class="stat"><span>${Lang.t('statLevel')}</span><b>${Game.level}</b></div>
     <div class="stat"><span>${Lang.t('statMode')}</span><b>${modeName}</b></div>
     <div class="stat"><span>${Lang.t('statDifficulty')}</span><b>${Lang.name(Game.difficulty)}</b></div>
-    <div class="stat"><span>${Lang.t('earnedCurrency')}</span><b>${earned}</b></div>
+    <div class="stat"><span>${Lang.t('earnedCurrency')}</span><b>${reward.total}</b></div>
   `;
-  document.getElementById('name-input').value = Leaderboard.getLocalName();
+
+  // ---- first game-over: no name entry, upgrades are the primary CTA ----
+  const firstUi = Game.guided;
+  const nameInput = document.getElementById('name-input');
+  nameInput.value = Leaderboard.getLocalName();
+  nameInput.classList.toggle('hidden', firstUi);
+  document.getElementById('btn-go-upgrades').classList.toggle('hidden', !firstUi);
+  const restartBtn = document.querySelector('#screen-gameover [data-action="submit-restart"]');
+  if (restartBtn) { restartBtn.classList.toggle('btn-primary', !firstUi); restartBtn.classList.toggle('btn-ghost', firstUi); }
+  const noteEl = document.getElementById('gameover-note');
+  const lines = [];
+  if (firstUi) {
+    if (reward.bonus > 0) lines.push(Lang.t('firstBonus').replace('{n}', reward.bonus));
+    const cheapest = Math.min(...META_UPGRADES.map((d) => Meta.costFor(d, Meta.getUpgradeLevel(d.id))));
+    if (Meta.getCurrency() >= cheapest) lines.push(Lang.t('firstEnough'));
+  }
+  noteEl.innerHTML = lines.map(escapeHtml).join('<br>');
+  noteEl.classList.toggle('hidden', !lines.length);
+  const goalEl = document.getElementById('gameover-goal');
+  const goal = nextGoalText(Game.level, cfg);
+  goalEl.textContent = goal;
+  goalEl.classList.toggle('hidden', !goal);
   showScreen('screen-gameover');
 
-  // Interstitial ad on a cadence (every 3rd run) rather than every death -
-  // keeps the game from feeling ad-gated while still monetizing repeat play.
-  // Skipped entirely once the player owns the 'remove_ads' IAP.
-  if (runCount % 3 === 0 && !Meta.hasPurchase('remove_ads')) showInterstitialAny();
+  // ---- forced interstitial: never for a new player (see FirstRun.interstitialAllowed) ----
+  const hasRemoveAds = Meta.hasPurchase('remove_ads');
+  const activeSecs = Meta.getActivePlaySeconds();
+  const allowed = FirstRun.interstitialAllowed({ hasRemoveAds, guided: Game.guided, runCount, activePlaySeconds: activeSecs });
+  if (allowed) {
+    Analytics.track('interstitial_offer', { run_number: runCount, active_sec: Math.round(activeSecs) });
+    try {
+      Promise.resolve(showInterstitialAny())
+        .then(() => Analytics.track('interstitial_result', { result: 'done' }))
+        .catch(() => Analytics.track('interstitial_result', { result: 'error' }));
+    } catch (e) { Analytics.track('interstitial_result', { result: 'error' }); }
+  } else if (runCount % AD_RULES.everyNRuns === 0 && !hasRemoveAds) {
+    Analytics.track('interstitial_blocked', { run_number: runCount, active_sec: Math.round(activeSecs), guided: Game.guided });
+  }
 }
 
 // The game-over screen has three buttons that each kick off an async flow
@@ -945,6 +1303,7 @@ async function reviveViaAd() {
   } finally {
     setGameOverButtonsBusy(false);
   }
+  Analytics.track('revive_result', { type: 'ad', ok: !!rewarded });
   // The player could have restarted or quit to the menu while the ad was
   // loading (both were disabled during the ad, but this guards against any
   // future path that reaches endRun/startRun without going through the
@@ -1078,6 +1437,8 @@ function performAttack() {
     else Sfx.shootLight();
   }
   triggerShake(w.type === 'melee' ? 2 : 3, 0.08);
+  Analytics.once('first_attack', { elapsed_sec: Math.round(Game.runElapsed) });
+  tutorialEvent('attack');
 }
 
 function meleeSwing(p, w) {
@@ -1194,6 +1555,8 @@ function onEnemyOrBossKilled(entity) {
     { speed: [60, entity.isBoss ? 420 : 220], life: [0.3, entity.isBoss ? 0.9 : 0.5] });
   triggerShake(entity.isBoss ? 14 : 4, entity.isBoss ? 0.5 : 0.12);
   if (entity.isBoss) { Sfx.bossDeath(); Game.boss = null; } else { Sfx.death(); }
+  Analytics.once('first_kill', { elapsed_sec: Math.round(Game.runElapsed), boss: !!entity.isBoss });
+  tutorialEvent('kill');
 }
 
 function triggerShake(mag, time) {
@@ -1278,10 +1641,25 @@ function update(dt) {
     p.angle = Utils.angleTo(p.x, p.y, worldMouse.x, worldMouse.y);
   }
 
+  // ---- first-session bookkeeping: active play time, rookie protection ----
+  Game.runElapsed += dt;
+  Game.playAccum += dt;
+  if (Game.playAccum >= 10) flushPlayTime();
+  p.hpFloor = FirstRun.graceHpFloor(Game.guided, Game.runElapsed, p.maxHp);
+  const px0 = p.x, py0 = p.y;
+
   p.update(dt);
   resolveWallCollision(p, Game.walls);
   p.x = Utils.clamp(p.x, 0, Balance.arenaW);
   p.y = Utils.clamp(p.y, 0, Balance.arenaH);
+  if (Game.moveDist < FIRST_RUN.moveDistance + 5) {
+    Game.moveDist += Math.hypot(p.x - px0, p.y - py0);
+    if (Game.moveDist >= 12) Analytics.once('first_move', { elapsed_sec: Math.round(Game.runElapsed) });
+    if (Game.moveDist >= FIRST_RUN.moveDistance) tutorialEvent('move');
+  }
+  if (Game.tutorial && Game.tutorial.done && !Game.tutorial.skipped && Game.tutorialDoneUntil && Game.runElapsed > Game.tutorialDoneUntil) {
+    Game.tutorialDoneUntil = 0; updateTutorialUi();
+  }
   // chilled by the Cryo boss (see the projectile-vs-player block below) -
   // a light frost-particle tell, matching the ember cue burning enemies get
   if (p.chillTimer > 0 && Math.random() < 0.35) {
@@ -1409,19 +1787,22 @@ function update(dt) {
   }
 
   // ---- trickle in queued enemies as the alive count drops below the cap ----
-  if (Game.spawnQueue.length > 0) {
+  if (Game.spawnQueue.length > 0 && !Game.spawnHold) {
     Game.spawnTimer -= dt;
     const cfgCap = (GAME_MODES[Game.mode] || GAME_MODES.hardcore).maxAlive;
     if (Game.spawnTimer <= 0 && Game.enemies.length < cfgCap) {
-      const type = Game.spawnQueue.shift();
+      let type = Game.spawnQueue.shift();
+      if (Game.guided && Game.tutorial && !Game.tutorial.done) type = 'rusher'; // no shooters / heavies before the tutorial is over
       const pos = Level.spawnPositionAwayFrom(p.x, p.y, 260, Game.walls);
       const en = new Enemy(type, pos.x, pos.y);
       const diff = Game.difficulty;
       en.speedMult = (GAME_MODES[Game.mode] || GAME_MODES.hardcore).enemySpeedMult * (diff ? diff.speedMult : 1);
       en.hp = Math.round(en.hp * (diff ? diff.hpMult : 1)); en.maxHp = en.hp;
       en.dmgMult = diff ? diff.dmgMult : 1;
+      const guidedLevel = Game.guided && Game.level <= FIRST_RUN.guidedLevels;
+      if (guidedLevel) applyGuidedMods([en]);
       Game.enemies.push(en);
-      Game.spawnTimer = 0.12;
+      Game.spawnTimer = guidedLevel ? FIRST_RUN.waveSpawnGap : 0.12; // first waves trickle in gently
     }
   }
 
@@ -1454,6 +1835,16 @@ function update(dt) {
     if (Game.dashTrail[i].life <= 0) Game.dashTrail.splice(i, 1);
   }
 
+  // ---- rookie assist: a guided level 1 that drags on is wrapped up (visibly) ----
+  if (Game.guided && Game.level === 1 && !Game.assisted && Game.waveState === 'fighting' &&
+      Game.runElapsed - Game.levelStartElapsed > FIRST_RUN.assistAfterSeconds) {
+    Game.assisted = true;
+    Game.enemies.forEach((en) => { Game.particles.burst(en.x, en.y, en.color, 14, { speed: [60, 220], life: [0.3, 0.6] }); });
+    Game.enemies = []; Game.spawnQueue = []; releaseSpawnHold();
+    showLevelBanner(Lang.t('assistBanner'));
+    Analytics.track('first_wave_assist', { elapsed_sec: Math.round(Game.runElapsed) });
+  }
+
   // ---- stage clear / progression ----
   if (Game.waveState === 'fighting' && Game.enemies.length === 0 && Game.spawnQueue.length === 0) onStageCleared();
   if (Game.waveState === 'bossfight' && !Game.boss) onStageCleared();
@@ -1470,6 +1861,8 @@ function update(dt) {
       beginLevel(cp.level);
       showLevelBanner(Lang.t('checkpointRevive'));
       Sfx.checkpoint();
+    } else if (Game.guided && FIRST_RUN.freeRevive && !Meta.isFreeReviveUsed() && !Game.freeReviveThisRun) {
+      freeReviveGuided();
     } else {
       endRun('death');
     }
@@ -1566,10 +1959,26 @@ function render() {
   Game.projectiles.forEach(drawProjectile);
   Game.flashes.forEach(drawFlash);
   Game.enemies.forEach(drawEnemy);
+  drawTutorialMarker();
   if (Game.boss) drawBoss(Game.boss);
   drawDashTrail();
   drawPlayer(p);
 
+  ctx.restore();
+}
+
+// Pulsing ring + chevron over the training enemy while the "kill" step is active.
+function drawTutorialMarker() {
+  const t = Game.tutorial, en = Game.tutorialTarget;
+  if (!t || t.done || !en || en.dead || TutorialFlow.current(t) !== 'kill') return;
+  const pulse = 1 + 0.12 * Math.sin(performance.now() / 160);
+  ctx.save();
+  ctx.strokeStyle = Palette.yellow || '#ffee00';
+  ctx.lineWidth = 3;
+  ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(en.x, en.y, (en.radius + 14) * pulse, 0, Math.PI * 2); ctx.stroke();
+  const y = en.y - en.radius - 34 - 4 * Math.sin(performance.now() / 160);
+  ctx.beginPath(); ctx.moveTo(en.x - 9, y - 8); ctx.lineTo(en.x, y + 4); ctx.lineTo(en.x + 9, y - 8); ctx.stroke();
   ctx.restore();
 }
 
@@ -2147,6 +2556,7 @@ async function boot() {
   //    (Previously boot() awaited Yandex/VK init AND a request to the backend
   //    first, so on phones the difficulty buttons did nothing for a while.)
   Lang.detect();
+  Analytics.init({ lang: Lang.current, mobile: ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) });
   TouchControls.init();
   buildAllUi();
   showScreen('screen-menu');
@@ -2156,6 +2566,8 @@ async function boot() {
   await withTimeout(Yandex.init(), 5000);
   await withTimeout(VK.init(), 6000);
   syncSocialButtons();
+  Analytics.setContext({ platform: Yandex.ready ? 'yandex' : (VK.ready ? 'vk' : 'web') });
+  Analytics.track('session_start', { returning: Meta.getRunCount() > 0, run_count: Meta.getRunCount(), tutorial: Meta.getTutorialStatus() });
   await withTimeout(Monetization.init(), 4000);
 
   // The SDK may know the real language (Yandex) - re-apply if it changed.
